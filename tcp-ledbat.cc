@@ -167,9 +167,27 @@ void
 TcpLedbat::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 {
     NS_LOG_FUNCTION(this << tcb << segmentsAcked);
-    if (tcb->m_cWnd.Get() <= tcb->m_segmentSize)
+    if (tcb->m_cWnd.Get() <= tcb->m_segmentSize && !(tcb->m_initialSs))
     {
         m_flag |= LEDBAT_CAN_SS;
+    } 
+    if (tcb->m_initialSs && (m_flag & LEDBAT_VALID_OWD))
+    {
+        int64_t queue_delay;
+        uint64_t current_delay = CurrentDelay(&TcpLedbat::MinCircBuf);
+        uint64_t base_delay = BaseDelay();
+
+        queue_delay = current_delay > base_delay ? current_delay - base_delay : 0;
+
+        if (static_cast<double>queue_delay > 0.75 * static_cast<double>m_target.GetMilliSeconds())
+        {
+            tcb->m_initialSs = false;
+            m_flag &= ~LEDBAT_CAN_SS;
+        }
+        else
+        {
+            m_flag |= LEDBAT_CAN_SS;
+        }
     }
     if (m_doSs == DO_SLOWSTART && tcb->m_cWnd <= tcb->m_ssThresh && (m_flag & LEDBAT_CAN_SS))
     {
@@ -177,6 +195,7 @@ TcpLedbat::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
     }
     else
     {
+        tcb->m_initialSs = false;
         m_flag &= ~LEDBAT_CAN_SS;
         CongestionAvoidance(tcb, segmentsAcked);
     }
