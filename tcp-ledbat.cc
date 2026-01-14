@@ -30,7 +30,7 @@ TcpLedbat::GetTypeId()
             .SetGroupName("Internet")
             .AddAttribute("TargetDelay",
                           "Targeted Queue Delay",
-                          TimeValue(MilliSeconds(100)),
+                          TimeValue(MilliSeconds(60)),
                           MakeTimeAccessor(&TcpLedbat::m_target),
                           MakeTimeChecker())
             .AddAttribute("BaseHistoryLen",
@@ -80,7 +80,7 @@ TcpLedbat::TcpLedbat()
     : TcpNewReno()
 {
     NS_LOG_FUNCTION(this);
-    m_target = MilliSeconds(100);
+    m_target = MilliSeconds(60);
     m_gain = 1;
     m_doSs = DO_SLOWSTART;
     m_baseHistoLen = 10;
@@ -310,24 +310,28 @@ TcpLedbat::UpdateBaseDelay(uint32_t owd)
 }
 
 void
-TcpLedbat::PktsAcked(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked, const Time& rtt)
+TcpLedbat::PktsAcked(Ptr<TcpSocketState> tcb,
+                     uint32_t segmentsAcked,
+                     const Time& rtt)
 {
     NS_LOG_FUNCTION(this << tcb << segmentsAcked << rtt);
-    if (tcb->m_rcvTimestampValue == 0 || tcb->m_rcvTimestampEchoReply == 0)
+
+    if (rtt.IsPositive())
     {
-        m_flag &= ~LEDBAT_VALID_OWD;
+        // RTT based delay signal 
+        m_flag |= LEDBAT_VALID_OWD;
+
+        uint32_t rttMs = rtt.GetMilliSeconds();
+
+        AddDelay(m_noiseFilter, rttMs, m_noiseFilterLen);
+        UpdateBaseDelay(rttMs);
     }
     else
     {
-        m_flag |= LEDBAT_VALID_OWD;
+        m_flag &= ~LEDBAT_VALID_OWD;
     }
-    if (rtt.IsPositive())
-    {
-        AddDelay(m_noiseFilter,
-                 tcb->m_rcvTimestampValue - tcb->m_rcvTimestampEchoReply,
-                 m_noiseFilterLen);
-        UpdateBaseDelay(tcb->m_rcvTimestampValue - tcb->m_rcvTimestampEchoReply);
-    }
+}
+
 }
 
 } // namespace ns3
