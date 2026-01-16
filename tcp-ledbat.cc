@@ -179,7 +179,7 @@ TcpLedbat::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 
         queue_delay = current_delay > base_delay ? current_delay - base_delay : 0;
 
-        if (static_cast<double>queue_delay > 0.75 * static_cast<double>m_target.GetMilliSeconds())
+        if (static_cast<double>(queue_delay) > 0.75 * static_cast<double>(m_target.GetMilliSeconds()))
         {
             tcb->m_initialSs = false;
             m_flag &= ~LEDBAT_CAN_SS;
@@ -225,6 +225,8 @@ TcpLedbat::CongestionAvoidance(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 
     double delayRatio = static_cast<double>(queue_delay) / m_target.GetMilliSeconds();
 
+  
+
     if(delayRatio < 1.0){
         W += m_gain;
     } else {
@@ -234,6 +236,11 @@ TcpLedbat::CongestionAvoidance(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 
     W = std::max(W, 2.0);
     cwnd = static_cast<uint32_t>(W * segmentSize);
+    NS_LOG_INFO("base_delay: " << base_delay
+                << " curr_delay: " << current_delay
+                << " queue_delay: " << queue_delay
+                << " delay_ratio: " << delayRatio
+		    << "W: " << W);
 
     max_cwnd = static_cast<uint32_t>(tcb->m_highTxMark.Get() - tcb->m_lastAckedSeq) +
                segmentsAcked * tcb->m_segmentSize;
@@ -330,8 +337,6 @@ TcpLedbat::PktsAcked(Ptr<TcpSocketState> tcb,
     {
         m_flag &= ~LEDBAT_VALID_OWD;
     }
-}
-
 }
 
 } // namespace ns3
