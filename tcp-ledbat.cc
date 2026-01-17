@@ -201,6 +201,7 @@ TcpLedbat::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 
         if (static_cast<double>(queue_delay) > 0.75 * static_cast<double>(m_target.GetMilliSeconds()))
         {
+			NS_LOG_INFO("Exiting initial slow start due to exceeding 3/4 of target delay...");
             tcb->m_initialSs = false;
             m_flag &= ~LEDBAT_CAN_SS;
         }
