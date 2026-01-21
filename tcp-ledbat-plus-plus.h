@@ -111,7 +111,7 @@ class TcpLedbatPlusPlus : public TcpNewReno
     struct OwdCircBuf
     {
         std::vector<uint32_t> buffer; //!< Vector to store the delay
-        uint32_t min;                 //!< The index of minimum value
+        size_t min;                 //!< The index of minimum value
     };
 
     /**
@@ -171,12 +171,13 @@ class TcpLedbatPlusPlus : public TcpNewReno
     SlowStartType m_doSs;      //!< Permissible Slow Start State
     uint32_t m_baseHistoLen;   //!< Length of base delay history buffer
     uint32_t m_noiseFilterLen; //!< Length of current delay buffer
-    uint64_t m_lastRollover;   //!< Timestamp of last added delay
-    int32_t m_sndCwndCnt;      //!< The congestion window addition parameter
+    Time m_lastRollover;   //!< Timestamp of last added delay
+    double m_sndCwndCnt;      //!< The congestion window addition parameter
     OwdCircBuf m_baseHistory;  //!< Buffer to store the base delay
     OwdCircBuf m_noiseFilter;  //!< Buffer to store the current delay
     uint32_t m_flag;           //!< LEDBAT Flag
     uint32_t m_minCwnd;        //!< Minimum cWnd value mentioned in RFC 6817
+    double m_allowedIncrease;  //!< ALLOWED INCREASE value mentioned in RFC 6817
 };
 
 } // namespace ns3

@@ -37,17 +37,17 @@ TcpLedbatPlusPlus::GetTypeId()
                           "Number of Base delay samples",
                           UintegerValue(10),
                           MakeUintegerAccessor(&TcpLedbatPlusPlus::m_baseHistoLen),
-                          MakeUintegerChecker<uint32_t>())
+                          MakeUintegerChecker<uint32_t>(1))
             .AddAttribute("NoiseFilterLen",
                           "Number of Current delay samples",
                           UintegerValue(4),
                           MakeUintegerAccessor(&TcpLedbatPlusPlus::m_noiseFilterLen),
-                          MakeUintegerChecker<uint32_t>())
+                          MakeUintegerChecker<uint32_t>(1))
             .AddAttribute("Gain",
                           "Offset Gain",
                           DoubleValue(1.0),
                           MakeDoubleAccessor(&TcpLedbatPlusPlus::m_gain),
-                          MakeDoubleChecker<double>())
+                          MakeDoubleChecker<double>(1e-6))
             .AddAttribute("SSParam",
                           "Possibility of Slow Start",
                           EnumValue(DO_SLOWSTART),
@@ -57,7 +57,12 @@ TcpLedbatPlusPlus::GetTypeId()
                           "Minimum cWnd for Ledbat",
                           UintegerValue(2),
                           MakeUintegerAccessor(&TcpLedbatPlusPlus::m_minCwnd),
-                          MakeUintegerChecker<uint32_t>());
+                          MakeUintegerChecker<uint32_t>(1))
+            .AddAttribute("AllowedIncrease",
+                          "Allowed Increase",
+                          DoubleValue(1.0),
+                          MakeDoubleAccessor(&TcpLedbatPlusPlus::m_allowedIncrease),
+                          MakeDoubleChecker<double>(1e-6));
     return tid;
 }
 
@@ -80,17 +85,11 @@ TcpLedbatPlusPlus::TcpLedbatPlusPlus()
     : TcpNewReno()
 {
     NS_LOG_FUNCTION(this);
-    m_target = MilliSeconds(60);
-    m_gain = 1;
-    m_doSs = DO_SLOWSTART;
-    m_baseHistoLen = 10;
-    m_noiseFilterLen = 4;
     InitCircBuf(m_baseHistory);
     InitCircBuf(m_noiseFilter);
-    m_lastRollover = 0;
+    m_lastRollover = Seconds(0);
     m_sndCwndCnt = 0;
     m_flag = LEDBAT_CAN_SS;
-    m_minCwnd = 2;
 }
 
 void
@@ -116,6 +115,7 @@ TcpLedbatPlusPlus::TcpLedbatPlusPlus(const TcpLedbatPlusPlus& sock)
     m_sndCwndCnt = sock.m_sndCwndCnt;
     m_flag = sock.m_flag;
     m_minCwnd = sock.m_minCwnd;
+    m_allowedIncrease = sock.m_allowedIncrease;
 }
 
 TcpLedbatPlusPlus::~TcpLedbatPlusPlus()
@@ -193,13 +193,14 @@ TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcke
     } 
     if (tcb->m_initialSs && (m_flag & LEDBAT_VALID_OWD))
     {
-        int64_t queue_delay;
-        uint64_t current_delay = CurrentDelay(&TcpLedbatPlusPlus::MinCircBuf);
-        uint64_t base_delay = BaseDelay();
+        uint32_t queueDelay;
+        uint32_t currentDelay = CurrentDelay(&TcpLedbatPlusPlus::MinCircBuf);
+        uint32_t baseDelay = BaseDelay();
 
-        queue_delay = current_delay > base_delay ? current_delay - base_delay : 0;
+        queueDelay = currentDelay > baseDelay ? currentDelay - baseDelay : 0;
+        NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds());
 
-        if (static_cast<double>(queue_delay) > 0.75 * static_cast<double>(m_target.GetMilliSeconds()))
+        if (static_cast<double>(queueDelay) > 0.75 * static_cast<double>(m_target.GetMilliSeconds()))
         {
 			NS_LOG_INFO("Exiting initial slow start due to exceeding 3/4 of target delay...");
             tcb->m_initialSs = false;
@@ -233,18 +234,18 @@ TcpLedbatPlusPlus::CongestionAvoidance(Ptr<TcpSocketState> tcb, uint32_t segment
             segmentsAcked); // letting it fall to TCP behaviour if no timestamps
         return;
     }
-    int64_t queue_delay;
+    uint32_t queueDelay;
     uint32_t cwnd = (tcb->m_cWnd.Get());
-    uint32_t max_cwnd;
-    uint64_t current_delay = CurrentDelay(&TcpLedbatPlusPlus::MinCircBuf);
-    uint64_t base_delay = BaseDelay();
+    uint32_t maxCwnd;
+    uint32_t currentDelay = CurrentDelay(&TcpLedbatPlusPlus::MinCircBuf);
+    uint32_t baseDelay = BaseDelay();
     uint32_t segmentSize = tcb->m_segmentSize;
 
     double W = static_cast<double>(cwnd) / segmentSize;
 
-    queue_delay = current_delay > base_delay ? current_delay - base_delay : 0;
+    queueDelay = currentDelay > baseDelay ? currentDelay - baseDelay : 0;
 
-    double delayRatio = static_cast<double>(queue_delay) / m_target.GetMilliSeconds();
+    double delayRatio = static_cast<double>(queueDelay) / m_target.GetMilliSeconds();
 
   
 
@@ -258,17 +259,16 @@ TcpLedbatPlusPlus::CongestionAvoidance(Ptr<TcpSocketState> tcb, uint32_t segment
 
     W = std::max(W, 2.0);
     cwnd = static_cast<uint32_t>(W * segmentSize);
-    NS_LOG_INFO("base_delay: " << base_delay
-                << " curr_delay: " << current_delay
-                << " queue_delay: " << queue_delay
+    NS_LOG_INFO("base_delay: " << baseDelay
+                << " curr_delay: " << currentDelay
+                << " queue_delay: " << queueDelay
                 << " delay_ratio: " << delayRatio
                 << " W: " << W);
 
-    NS_LOG_INFO("W=" << W << " ratio=" << delayRatio);
-    max_cwnd = static_cast<uint32_t>(tcb->m_highTxMark.Get() - tcb->m_lastAckedSeq) +
-               segmentsAcked * tcb->m_segmentSize;
-    cwnd = std::min(cwnd, max_cwnd);
-    cwnd = std::max(cwnd, m_minCwnd * tcb->m_segmentSize);
+    uint32_t flightSizeBeforeAck = tcb->m_bytesInFlight.Get() + (segmentsAcked * segmentSize);
+    maxCwnd = flightSizeBeforeAck + static_cast<uint32_t>(m_allowedIncrease * segmentSize);
+    cwnd = std::min(cwnd, maxCwnd);
+    cwnd = std::max(cwnd, m_minCwnd * segmentSize);
     tcb->m_cWnd = cwnd;
 
     if (tcb->m_cWnd <= tcb->m_ssThresh)
@@ -291,21 +291,15 @@ TcpLedbatPlusPlus::AddDelay(OwdCircBuf& cb, uint32_t owd, uint32_t maxlen)
     cb.buffer.push_back(owd);
     if (cb.buffer[cb.min] > owd)
     {
-        cb.min = static_cast<uint32_t>(cb.buffer.size() - 1);
+        cb.min = cb.buffer.size() - 1;
     }
     if (cb.buffer.size() >= maxlen)
     {
         NS_LOG_LOGIC("Queue full" << maxlen);
         cb.buffer.erase(cb.buffer.begin());
-        cb.min = 0;
+        auto bufferStart = cb.buffer.begin();
+        cb.min = std::distance(bufferStart, std::min_element(bufferStart, cb.buffer.end()));
         NS_LOG_LOGIC("Current min element" << cb.buffer[cb.min]);
-        for (uint32_t i = 1; i < maxlen - 1; i++)
-        {
-            if (cb.buffer[i] < cb.buffer[cb.min])
-            {
-                cb.min = i;
-            }
-        }
     }
 }
 
@@ -318,16 +312,16 @@ TcpLedbatPlusPlus::UpdateBaseDelay(uint32_t owd)
         AddDelay(m_baseHistory, owd, m_baseHistoLen);
         return;
     }
-    uint64_t timestamp = static_cast<uint64_t>(Simulator::Now().GetSeconds());
+    Time timestamp = Simulator::Now();
 
-    if (timestamp - m_lastRollover > 60)
+    if (timestamp - m_lastRollover > Seconds(60))
     {
         m_lastRollover = timestamp;
         AddDelay(m_baseHistory, owd, m_baseHistoLen);
     }
     else
     {
-        auto last = static_cast<uint32_t>(m_baseHistory.buffer.size() - 1);
+        size_t last = m_baseHistory.buffer.size() - 1;
         if (owd < m_baseHistory.buffer[last])
         {
             m_baseHistory.buffer[last] = owd;
@@ -346,7 +340,7 @@ TcpLedbatPlusPlus::PktsAcked(Ptr<TcpSocketState> tcb,
 {
     NS_LOG_FUNCTION(this << tcb << segmentsAcked << rtt);
 
-    if (rtt.IsPositive())
+    if (rtt.IsPositive() && tcb->m_rcvTimestampValue >= tcb->m_rcvTimestampEchoReply)
     {
         // RTT based delay signal 
         m_flag |= LEDBAT_VALID_OWD;
