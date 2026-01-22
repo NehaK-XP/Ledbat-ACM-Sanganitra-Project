@@ -204,6 +204,7 @@ TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcke
         if (static_cast<double>(queueDelay) > 0.75 * static_cast<double>(m_target.GetMilliSeconds()))
         {
 			NS_LOG_INFO("Exiting initial slow start due to exceeding 3/4 of target delay...");
+            NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds());
             tcb->m_initialSs = false;
             m_flag &= ~LEDBAT_CAN_SS;
         }
@@ -213,12 +214,11 @@ TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcke
         }
     }
 
-    if(m_flag & LEDBAT_VALID_OWD){
-        NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds());
-    }
-
     if (m_doSs == DO_SLOWSTART && tcb->m_cWnd <= tcb->m_ssThresh && (m_flag & LEDBAT_CAN_SS))
     {
+        if((m_flag & LEDBAT_VALID_OWD)){
+            NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds());
+        }
         SlowStart(tcb, segmentsAcked);
     }
     else
@@ -247,6 +247,7 @@ TcpLedbatPlusPlus::CongestionAvoidance(Ptr<TcpSocketState> tcb, uint32_t segment
     uint32_t baseDelay = BaseDelay();
     uint32_t segmentSize = tcb->m_segmentSize;
 
+    double ackFactor = static_cast<double>(segmentSize) / cwnd;
     double W = static_cast<double>(cwnd) / segmentSize;
 
     queueDelay = currentDelay > baseDelay ? currentDelay - baseDelay : 0;
@@ -254,13 +255,12 @@ TcpLedbatPlusPlus::CongestionAvoidance(Ptr<TcpSocketState> tcb, uint32_t segment
     double delayRatio = static_cast<double>(queueDelay) / m_target.GetMilliSeconds();
 
   
-
     if(delayRatio < 1.0){
         double gain = ComputeGain();
-        W += gain;
+        W += gain * ackFactor;
     } else {
         double md = m_gain - W * (delayRatio - 1.0);
-        W += std::max(md, -W / 2.0);
+        W += std::max(md * ackFactor, -W * ackFactor / 2.0);
     }
 
     W = std::max(W, 2.0);
@@ -272,8 +272,7 @@ TcpLedbatPlusPlus::CongestionAvoidance(Ptr<TcpSocketState> tcb, uint32_t segment
                 << " W: " << W);
     NS_LOG_INFO("W=" << W << " ratio=" << delayRatio);
 
-    // verify why cwnd goes below W/2
-    uint32_t flightSizeBeforeAck = tcb->m_bytesInFlight.Get();
+    uint32_t flightSizeBeforeAck = tcb->m_bytesInFlight.Get() + (segmentsAcked * segmentSize);
     maxCwnd = flightSizeBeforeAck + static_cast<uint32_t>(m_allowedIncrease * segmentSize);
     cwnd = std::min(cwnd, maxCwnd);
     cwnd = std::max(cwnd, m_minCwnd * segmentSize);
