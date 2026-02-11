@@ -215,6 +215,16 @@ class TcpSocketState : public Object
         0}; //!< The number of bytes acked and sacked as indicated by the current ACK received. This
             //!< is similar to acked_sacked variable in Linux
 
+    //for periodic slowdown according to section 4.4
+    Time m_initialSsExitTime = Time::Max();                    //!< Time when exiting initial slow start
+    Time m_slowdownStartTime;                                  //!< Time when slowdown starts
+    Time m_slowdownDuration;                                   //!< Duration of slowdown
+    Time m_nextSlowdownTime = Time::Max();                     //!< Minimum time when next slowdown occurs
+    bool m_waitingForInitialSlowdown = false;                  //!< waiting for initial slowdown
+    bool m_inSlowdown = false;                                 //!< currently in slowdown
+    bool m_slowdownRecovery = false;                           //!< recovering from slowdown, cwnd increases to ssthresh
+
+
     /**
      * @brief Get cwnd in segments rather than bytes
      *

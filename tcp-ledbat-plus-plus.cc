@@ -187,7 +187,7 @@ void
 TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 {
     NS_LOG_FUNCTION(this << tcb << segmentsAcked);
-    if (tcb->m_cWnd.Get() <= tcb->m_segmentSize && !(tcb->m_initialSs))
+    if (tcb->m_cWnd.Get() <= tcb->m_segmentSize && !(tcb->m_initialSs || tcb->m_waitingForInitialSlowdown || tcb->m_inSlowdown || tcb->m_slowdownRecovery))
     {
         m_flag |= LEDBAT_CAN_SS;
     } 
@@ -201,20 +201,85 @@ TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcke
 
         queueDelay = currentDelay > baseDelay ? currentDelay - baseDelay : 0;
 
-        if (static_cast<double>(queueDelay) > 0.75 * static_cast<double>(m_target.GetMilliSeconds()))
+        if (static_cast<double>(queueDelay) > 0.75 * static_cast<double>(m_target.GetMilliSeconds()))       //after exiting initial slow start, we wait for 2 RTT to enter into initial slowdown
         {
 			NS_LOG_INFO("Exiting initial slow start due to exceeding 3/4 of target delay...");
             NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds());
             tcb->m_initialSs = false;
             m_flag &= ~LEDBAT_CAN_SS;
+            tcb->m_initialSsExitTime = Simulator::Now();
+            tcb->m_waitingForInitialSlowdown = true;
         }
         else
         {
             m_flag |= LEDBAT_CAN_SS;
         }
+    }else if(!(tcb->m_waitingForInitialSlowdown || tcb->m_inSlowdown || tcb->m_slowdownRecovery) && (Simulator::Now() >= tcb->m_nextSlowdownTime)){     //checking if time for next periodic slowdown
+        tcb->m_inSlowdown = true;
+        tcb->m_inSlowdown = true;
+        m_flag |= LEDBAT_CAN_SS;
+        tcb->m_slowdownStartTime = Simulator::Now();
+        tcb->m_ssThresh = tcb->m_cWnd;                                      // set ssthresh to current cwnd
+        tcb->m_cWnd = 2 * tcb->m_segmentSize;                               // set cwnd to two packets for 2 RTT
     }
 
-    if (m_doSs == DO_SLOWSTART && tcb->m_cWnd <= tcb->m_ssThresh && (m_flag & LEDBAT_CAN_SS))
+    if(tcb->m_waitingForInitialSlowdown){                                       // checking if initial slowdown has not occured yet
+        if(m_flag & LEDBAT_VALID_OWD){
+            uint32_t currentDelay = CurrentDelay(&TcpLedbatPlusPlus::MinCircBuf);
+            uint32_t baseDelay = BaseDelay();
+            queueDelay = currentDelay > baseDelay ? currentDelay - baseDelay : 0;
+            NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds()<<" Base delay: "<< baseDelay);
+        }
+        if(Simulator::Now() - tcb->m_initialSsExitTime >= 2*tcb->m_srtt){       // waited for 2 RTT and now entering initial slowdown
+            tcb->m_waitingForInitialSlowdown = false;
+            tcb->m_inSlowdown = true;
+            tcb->m_slowdownStartTime = Simulator::Now();
+            tcb->m_ssThresh = tcb->m_cWnd;                                      // set ssthresh to current cwnd
+            tcb->m_cWnd = 2 * tcb->m_segmentSize;                               // set cwnd to two packets for 2 RTT
+            m_flag |= LEDBAT_CAN_SS;
+            NS_LOG_INFO("Holding cwnd at 2 packets for 2 RTT...");
+        }else{                                                                  // 2 RTT have not passed and still waiting for slowdown
+            NS_LOG_INFO("Waiting 2 RTT for initial slowdown period to start...");
+            m_flag &= ~LEDBAT_CAN_SS;
+            CongestionAvoidance(tcb, segmentsAcked);
+        }
+    }
+    else if(tcb->m_inSlowdown && (m_flag & LEDBAT_CAN_SS)){                                                 // checking if in slowdown phase
+        if(m_flag & LEDBAT_VALID_OWD){
+            uint32_t currentDelay = CurrentDelay(&TcpLedbatPlusPlus::MinCircBuf);
+            uint32_t baseDelay = BaseDelay();
+            queueDelay = currentDelay > baseDelay ? currentDelay - baseDelay : 0;
+            NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds()<<" Base delay: "<< baseDelay);
+        }
+        if(Simulator::Now() - tcb->m_slowdownStartTime >= 2*tcb->m_srtt){       // checking if 2 RTT have passed after holding cwnd at 2 packets
+            tcb->m_inSlowdown = false;
+            tcb->m_slowdownRecovery = true;                                     // grow cwnd according to SlowStart
+            m_flag |= LEDBAT_CAN_SS;
+            NS_LOG_INFO("2 RTT over, growing cwnd to ssthresh through slow start...");
+            SlowStart(tcb, segmentsAcked);
+        }else{                                                                  // continue to hold cwnd at 2 packets until 2 RTT passes
+            NS_LOG_INFO("Holding cwnd at 2 packets for 2 RTT...");
+        }
+    }else if(tcb->m_slowdownRecovery){                                          // checking if in slowdown recovery, growing cwnd to ssthresh 
+        if(m_flag & LEDBAT_VALID_OWD){
+            uint32_t currentDelay = CurrentDelay(&TcpLedbatPlusPlus::MinCircBuf);
+            uint32_t baseDelay = BaseDelay();
+            queueDelay = currentDelay > baseDelay ? currentDelay - baseDelay : 0;
+            NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds()<<" Base delay: "<< baseDelay);
+        }
+        if(tcb->m_cWnd >= tcb->m_ssThresh){                                     // checking if cwnd has regrown to ssthresh
+            tcb->m_slowdownRecovery = false;
+            tcb->m_slowdownDuration = Simulator::Now() - tcb->m_slowdownStartTime;
+            tcb->m_nextSlowdownTime = Simulator::Now() + 9*tcb->m_slowdownDuration;
+            m_flag &= ~LEDBAT_CAN_SS;
+            CongestionAvoidance(tcb, segmentsAcked);
+        }else{                                                                  // waiting for cwnd to regrow to ssthresh
+            NS_LOG_INFO("Growing cwnd to ssthresh through slow start...");
+            m_flag |= LEDBAT_CAN_SS;
+            SlowStart(tcb, segmentsAcked);
+        }
+    }
+    else if (m_doSs == DO_SLOWSTART && tcb->m_cWnd <= tcb->m_ssThresh && (m_flag & LEDBAT_CAN_SS))
     {
         if((m_flag & LEDBAT_VALID_OWD)){
             NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds());
@@ -223,7 +288,11 @@ TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcke
     }
     else
     {
-        tcb->m_initialSs = false;
+        if(tcb->m_initialSs){
+            tcb->m_initialSs = false;
+            tcb->m_initialSsExitTime = Simulator::Now();
+            tcb->m_waitingForInitialSlowdown = true;
+        }
         m_flag &= ~LEDBAT_CAN_SS;
         CongestionAvoidance(tcb, segmentsAcked);
     }

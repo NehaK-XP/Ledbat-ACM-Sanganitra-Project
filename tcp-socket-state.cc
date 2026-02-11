@@ -125,7 +125,14 @@ TcpSocketState::TcpSocketState(const TcpSocketState& other)
       m_useEcn(other.m_useEcn),
       m_abeEnabled(other.m_abeEnabled),
       m_ectCodePoint(other.m_ectCodePoint),
-      m_lastAckedSackedBytes(other.m_lastAckedSackedBytes)
+      m_lastAckedSackedBytes(other.m_lastAckedSackedBytes),
+      m_initialSsExitTime(other.m_initialSsExitTime),                    
+      m_slowdownStartTime(other.m_slowdownStartTime),             
+      m_slowdownDuration(other.m_slowdownDuration),            
+      m_nextSlowdownTime(other.m_nextSlowdownTime),              
+      m_waitingForInitialSlowdown(other.m_waitingForInitialSlowdown),    
+      m_inSlowdown(other.m_inSlowdown),            
+      m_slowdownRecovery(other.m_slowdownRecovery)
 
 {
 }
