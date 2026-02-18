@@ -216,7 +216,6 @@ TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcke
         }
     }else if(!(tcb->m_waitingForInitialSlowdown || tcb->m_inSlowdown || tcb->m_slowdownRecovery) && (Simulator::Now() >= tcb->m_nextSlowdownTime)){     //checking if time for next periodic slowdown
         tcb->m_inSlowdown = true;
-        tcb->m_inSlowdown = true;
         m_flag |= LEDBAT_CAN_SS;
         tcb->m_slowdownStartTime = Simulator::Now();
         tcb->m_ssThresh = tcb->m_cWnd;                                      // set ssthresh to current cwnd
@@ -268,6 +267,7 @@ TcpLedbatPlusPlus::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcke
             NS_LOG_INFO("Queue delay: "<< queueDelay<<" Target delay: "<< m_target.GetMilliSeconds()<<" Base delay: "<< baseDelay);
         }
         if(tcb->m_cWnd >= tcb->m_ssThresh){                                     // checking if cwnd has regrown to ssthresh
+            NS_LOG_INFO("Slowdown finished");
             tcb->m_slowdownRecovery = false;
             tcb->m_slowdownDuration = Simulator::Now() - tcb->m_slowdownStartTime;
             tcb->m_nextSlowdownTime = Simulator::Now() + 9*tcb->m_slowdownDuration;
